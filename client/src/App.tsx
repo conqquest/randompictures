@@ -691,6 +691,13 @@ function App() {
         }
       }}
     >
+      <div
+        className="image-background"
+        style={{
+          backgroundImage: `url(${JSON.stringify(image.image)})`,
+        }}
+      />
+
       <img
         src={image.image}
         alt={image.title}

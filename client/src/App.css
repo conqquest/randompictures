@@ -1,3 +1,7 @@
+/* =========================================
+   RESET & BASE STYLES
+========================================= */
+
 * {
   margin: 0;
   padding: 0;
@@ -9,6 +13,10 @@ body,
 #root {
   width: 100%;
   height: 100%;
+}
+
+html {
+  background: black;
 }
 
 body {
@@ -25,6 +33,11 @@ button {
   font-family: inherit;
 }
 
+
+/* =========================================
+   MAIN SCREEN
+========================================= */
+
 .screen {
   position: relative;
 
@@ -40,27 +53,79 @@ button {
   overflow: hidden;
 
   cursor: pointer;
+
+  isolation: isolate;
 }
 
+
+/* =========================================
+   BLURRED BACKGROUND LAYER
+   Fills the entire viewport without cropping
+   or altering the foreground image.
+========================================= */
+
+.image-background {
+  position: absolute;
+
+  inset: -40px;
+
+  z-index: 0;
+
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+
+  filter: blur(30px);
+
+  transform: scale(1.08);
+
+  opacity: 0.75;
+
+  pointer-events: none;
+}
+
+
+/* =========================================
+   FOREGROUND ORIGINAL IMAGE
+   NEVER CROP THE ACTUAL IMAGE
+========================================= */
+
 .random-image {
+  position: relative;
+
+  z-index: 1;
+
   width: 100%;
   height: 100%;
 
-  object-fit: cover;
+  object-fit: contain;
   object-position: center;
+
+  display: block;
 
   user-select: none;
 
   -webkit-user-drag: none;
 
-  display: block;
+  pointer-events: none;
 }
+
+
+/* =========================================
+   LOADING
+========================================= */
 
 .loading {
   color: white;
 
   font-size: 18px;
 }
+
+
+/*
+   Full-screen loader shown when the user
+   clicks before the next image is ready.
+*/
 
 .image-loading {
   position: fixed;
@@ -75,10 +140,15 @@ button {
   justify-content: center;
 
   background:
-    rgba(0, 0, 0, 0.08);
+    rgba(0, 0, 0, 0.18);
 
   pointer-events: none;
 }
+
+
+/* =========================================
+   THREE DOT MENU BUTTON
+========================================= */
 
 .menu-button {
   position: absolute;
@@ -92,6 +162,7 @@ button {
   height: 42px;
 
   display: flex;
+
   align-items: center;
   justify-content: center;
 
@@ -110,6 +181,8 @@ button {
 
   backdrop-filter: blur(10px);
 
+  -webkit-backdrop-filter: blur(10px);
+
   transition:
     background 0.2s ease,
     transform 0.2s ease;
@@ -123,6 +196,11 @@ button {
 .menu-button:active {
   transform: scale(0.92);
 }
+
+
+/* =========================================
+   CATEGORY MENU
+========================================= */
 
 .category-menu {
   position: absolute;
@@ -150,12 +228,35 @@ button {
 
   backdrop-filter: blur(20px);
 
+  -webkit-backdrop-filter: blur(20px);
+
   box-shadow:
     0 15px 50px
     rgba(0, 0, 0, 0.5);
 
   cursor: default;
 }
+
+
+/* Category scrollbar */
+
+.category-menu::-webkit-scrollbar {
+  width: 5px;
+}
+
+.category-menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.category-menu::-webkit-scrollbar-thumb {
+  background:
+    rgba(255, 255, 255, 0.2);
+
+  border-radius: 10px;
+}
+
+
+/* Category headings */
 
 .category-menu h3 {
   color: white;
@@ -175,6 +276,9 @@ button {
 
   opacity: 0.45;
 }
+
+
+/* Category buttons */
 
 .category {
   display: block;
@@ -211,6 +315,11 @@ button {
     rgba(255, 255, 255, 0.16);
 }
 
+
+/* =========================================
+   BOTTOM INFORMATION OVERLAY
+========================================= */
+
 .bottom-overlay {
   position: absolute;
 
@@ -243,6 +352,11 @@ button {
   pointer-events: auto;
 }
 
+
+/* =========================================
+   TITLE
+========================================= */
+
 .image-info h1 {
   font-size:
     clamp(24px, 3vw, 42px);
@@ -258,6 +372,11 @@ button {
     rgba(0, 0, 0, 0.5);
 }
 
+
+/* =========================================
+   YEAR
+========================================= */
+
 .year {
   font-size: 15px;
 
@@ -265,6 +384,11 @@ button {
 
   margin-bottom: 16px;
 }
+
+
+/* =========================================
+   READ MORE BUTTON
+========================================= */
 
 .read-more {
   border: none;
@@ -286,6 +410,8 @@ button {
 
   backdrop-filter: blur(10px);
 
+  -webkit-backdrop-filter: blur(10px);
+
   transition:
     background 0.2s ease,
     transform 0.2s ease;
@@ -300,8 +426,13 @@ button {
   transform: scale(0.96);
 }
 
+
+/* =========================================
+   INFORMATION MODAL
+========================================= */
+
 .info-overlay {
-  position: absolute;
+  position: fixed;
 
   inset: 0;
 
@@ -320,8 +451,15 @@ button {
 
   backdrop-filter: blur(6px);
 
+  -webkit-backdrop-filter: blur(6px);
+
   cursor: default;
 }
+
+
+/* =========================================
+   INFORMATION CARD
+========================================= */
 
 .info-card {
   position: relative;
@@ -347,6 +485,29 @@ button {
     rgba(0, 0, 0, 0.55);
 }
 
+
+/* Card scrollbar */
+
+.info-card::-webkit-scrollbar {
+  width: 5px;
+}
+
+.info-card::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.info-card::-webkit-scrollbar-thumb {
+  background:
+    rgba(255, 255, 255, 0.2);
+
+  border-radius: 10px;
+}
+
+
+/* =========================================
+   MODAL TITLE
+========================================= */
+
 .info-card h2 {
   font-size: 28px;
 
@@ -359,11 +520,21 @@ button {
   margin-bottom: 10px;
 }
 
+
+/* =========================================
+   MODAL YEAR
+========================================= */
+
 .info-year {
   opacity: 0.6;
 
   margin-bottom: 20px;
 }
+
+
+/* =========================================
+   DESCRIPTION
+========================================= */
 
 .info-description {
   color:
@@ -380,6 +551,11 @@ button {
   opacity: 0.55;
 }
 
+
+/* =========================================
+   INTERNET ARCHIVE LINK
+========================================= */
+
 .info-card a {
   color: white;
 
@@ -387,6 +563,11 @@ button {
 
   font-size: 14px;
 }
+
+
+/* =========================================
+   CLOSE BUTTON
+========================================= */
 
 .close-button {
   position: absolute;
@@ -424,14 +605,58 @@ button {
   transform: scale(0.9);
 }
 
+
+/* =========================================
+   DESKTOP & LAPTOP (min-width: 601px)
+========================================= */
+
+@media (min-width: 601px) {
+  .image-background {
+    filter: blur(35px);
+
+    transform: scale(1.1);
+
+    opacity: 0.7;
+  }
+
+  .bottom-overlay {
+    padding:
+      140px
+      40px
+      40px;
+  }
+}
+
+
+/* =========================================
+   TABLET (min-width: 601px and max-width: 1100px)
+========================================= */
+
+@media (min-width: 601px) and (max-width: 1100px) {
+  .bottom-overlay {
+    padding:
+      120px
+      30px
+      30px;
+  }
+
+  .image-info h1 {
+    font-size: 32px;
+  }
+}
+
+
+/* =========================================
+   MOBILE (max-width: 600px)
+========================================= */
+
 @media (max-width: 600px) {
   .menu-button {
     top: 15px;
     right: 15px;
-  }
 
-  .image-loading {
-    top: 15px;
+    width: 42px;
+    height: 42px;
   }
 
   .category-menu {
@@ -454,8 +679,20 @@ button {
     font-size: 24px;
   }
 
+  .year {
+    font-size: 14px;
+  }
+
+  .read-more {
+    padding:
+      10px
+      17px;
+  }
+
   .info-overlay {
     padding: 15px;
+
+    align-items: flex-end;
   }
 
   .info-card {
@@ -471,5 +708,83 @@ button {
 
   .info-card h2 {
     font-size: 22px;
+  }
+
+  .info-description {
+    font-size: 15px;
+
+    line-height: 1.6;
+  }
+
+  .image-background {
+    filter: blur(25px);
+
+    transform: scale(1.08);
+
+    opacity: 0.75;
+  }
+}
+
+
+/* =========================================
+   VERY SMALL PHONES (max-width: 380px)
+========================================= */
+
+@media (max-width: 380px) {
+  .bottom-overlay {
+    padding:
+      90px
+      15px
+      20px;
+  }
+
+  .image-info h1 {
+    font-size: 21px;
+  }
+
+  .read-more {
+    font-size: 13px;
+
+    padding:
+      9px
+      15px;
+  }
+
+  .category-menu {
+    right: 10px;
+
+    width: 210px;
+  }
+}
+
+
+/* =========================================
+   LANDSCAPE MOBILE
+========================================= */
+
+@media (max-height: 500px) and (orientation: landscape) {
+  .bottom-overlay {
+    padding:
+      70px
+      25px
+      18px;
+  }
+
+  .image-info h1 {
+    font-size: 22px;
+  }
+
+  .year {
+    margin-bottom: 8px;
+  }
+
+  .read-more {
+    padding:
+      7px
+      14px;
+  }
+
+  .category-menu {
+    max-height: 70vh;
   }
 }

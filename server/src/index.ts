@@ -21,6 +21,111 @@ interface ArchiveSearchResponse {
 }
 
 // ========================================
+// Category Search Terms
+// ========================================
+
+const categoryQueries: Record<string, string> = {
+  // General
+  history: "history",
+  art: "art",
+  photography: "photography",
+  nature: "nature",
+  science: "science",
+  architecture: "architecture",
+  maps: "maps",
+  people: "people",
+  animals: "animals",
+  technology: "technology",
+  travel: "travel",
+
+  // India
+  India: "India OR Indian",
+  "Indian history":
+    "India OR Indian history OR historical India",
+
+  "Indian art":
+    "India OR Indian art",
+
+  "Indian culture":
+    "India OR Indian culture",
+
+  "Indian architecture":
+    "India OR Indian architecture",
+
+  "Indian photography":
+    "India OR Indian photography",
+
+  "Indian cities":
+    "India OR Indian cities",
+
+  "Indian villages":
+    "India OR Indian villages",
+
+  "Indian people":
+    "India OR Indian people",
+
+  "Indian festivals":
+    "India OR Indian festivals",
+
+  "Indian traditions":
+    "India OR Indian traditions",
+
+  "Indian temples":
+    "India OR Indian temples",
+
+  "Indian monuments":
+    "India OR Indian monuments",
+
+  "Indian archaeology":
+    "India OR Indian archaeology",
+
+  "Indian textiles":
+    "India OR Indian textiles",
+
+  "Indian clothing":
+    "India OR Indian clothing",
+
+  "Indian food":
+    "India OR Indian food",
+
+  "Indian agriculture":
+    "India OR Indian agriculture",
+
+  "Indian railways":
+    "India OR Indian railway OR Indian railways",
+
+  "Indian streets":
+    "India OR Indian streets",
+
+  "Indian markets":
+    "India OR Indian markets",
+
+  "Indian maps":
+    "India OR Indian maps",
+
+  "British India":
+    "British India",
+
+  "Colonial India":
+    "Colonial India",
+
+  "Mughal India":
+    "Mughal India OR Mughal",
+
+  "Ancient India":
+    "Ancient India",
+
+  "Medieval India":
+    "Medieval India",
+
+  "Indian independence":
+    "Indian independence OR independence India",
+
+  "Indian freedom movement":
+    "Indian freedom movement OR Indian independence",
+};
+
+// ========================================
 // Health Check
 // ========================================
 
@@ -37,23 +142,33 @@ app.get("/api/health", (_req, res) => {
 
 app.get("/api/random", async (req, res) => {
   try {
-    // Default category is "all"
     const category =
       typeof req.query.category === "string"
         ? req.query.category
         : "all";
 
     // ========================================
-    // Build Internet Archive Query
+    // Build Query
     // ========================================
 
     let query = "mediatype:image";
 
     if (category !== "all") {
-      query += ` AND subject:"${category}"`;
+      const categoryQuery =
+        categoryQueries[category];
+
+      if (categoryQuery) {
+        query += ` AND (${categoryQuery})`;
+      } else {
+        // Fallback for unknown categories
+        query += ` AND ${category}`;
+      }
     }
 
-    // Pick random page
+    // ========================================
+    // Random Page
+    // ========================================
+
     const randomPage =
       Math.floor(Math.random() * 20) + 1;
 
@@ -76,7 +191,8 @@ app.get("/api/random", async (req, res) => {
     // Search Internet Archive
     // ========================================
 
-    const response = await fetch(searchUrl);
+    const response =
+      await fetch(searchUrl);
 
     if (!response.ok) {
       throw new Error(
@@ -92,117 +208,145 @@ app.get("/api/random", async (req, res) => {
 
     if (documents.length === 0) {
       return res.status(404).json({
-        error: "No images found",
+        error:
+          `No images found for category: ${category}`,
       });
     }
 
     // ========================================
-    // Pick Random Item
+    // Try Multiple Items
     // ========================================
 
-    const document =
-      documents[
-        Math.floor(
-          Math.random() * documents.length
-        )
-      ];
-
-    if (!document.identifier) {
-      return res.status(404).json({
-        error: "Image identifier not found",
-      });
-    }
-
-    // ========================================
-    // Get Item Metadata
-    // ========================================
-
-    const metadataResponse = await fetch(
-      `https://archive.org/metadata/${document.identifier}`
+    // Shuffle documents so we don't always
+    // select the same item.
+    const shuffled = [...documents].sort(
+      () => Math.random() - 0.5
     );
 
-    if (!metadataResponse.ok) {
-      throw new Error(
-        "Failed to get item metadata"
-      );
-    }
+    // Try up to 10 items to find one
+    // containing a real image.
+    for (
+      const document of shuffled.slice(0, 10)
+    ) {
+      if (!document.identifier) {
+        continue;
+      }
 
-    const metadata =
-      await metadataResponse.json();
+      try {
+        // ========================================
+        // Get Item Metadata
+        // ========================================
 
-    const files = metadata.files ?? [];
+        const metadataResponse =
+          await fetch(
+            `https://archive.org/metadata/${document.identifier}`
+          );
 
-    // ========================================
-    // Find Image Files
-    // ========================================
+        if (!metadataResponse.ok) {
+          continue;
+        }
 
-    const imageFiles = files.filter(
-      (file: any) => {
-        const name =
-          file.name?.toLowerCase() ?? "";
+        const metadata =
+          await metadataResponse.json();
 
-        const isImage =
-          name.endsWith(".jpg") ||
-          name.endsWith(".jpeg") ||
-          name.endsWith(".png") ||
-          name.endsWith(".webp");
+        const files =
+          metadata.files ?? [];
 
-        const isThumbnail =
-          name.includes("thumb") ||
-          name.startsWith("__");
+        // ========================================
+        // Find Image Files
+        // ========================================
 
-        return (
-          isImage &&
-          !isThumbnail
+        const imageFiles =
+          files.filter(
+            (file: any) => {
+              const name =
+                file.name?.toLowerCase() ??
+                "";
+
+              const isImage =
+                name.endsWith(".jpg") ||
+                name.endsWith(".jpeg") ||
+                name.endsWith(".png") ||
+                name.endsWith(".webp");
+
+              const isThumbnail =
+                name.includes("thumb") ||
+                name.startsWith("__");
+
+              return (
+                isImage &&
+                !isThumbnail
+              );
+            }
+          );
+
+        if (imageFiles.length === 0) {
+          continue;
+        }
+
+        // ========================================
+        // Prefer Largest Image
+        // ========================================
+
+        const imageFile =
+          imageFiles.sort(
+            (a: any, b: any) => {
+              const sizeA =
+                Number(a.size ?? 0);
+
+              const sizeB =
+                Number(b.size ?? 0);
+
+              return sizeB - sizeA;
+            }
+          )[0];
+
+        // ========================================
+        // Create Image URL
+        // ========================================
+
+        const imageUrl =
+          `https://archive.org/download/${document.identifier}/` +
+          encodeURIComponent(
+            imageFile.name
+          );
+
+        // ========================================
+        // Return Result
+        // ========================================
+
+        return res.json({
+          image: imageUrl,
+          title:
+            document.title ??
+            "Unknown",
+          year:
+            document.year ??
+            null,
+          description:
+            document.description ??
+            null,
+          identifier:
+            document.identifier,
+          category,
+        });
+      } catch (error) {
+        // If one IA item fails,
+        // try another one.
+        console.error(
+          `Failed item ${document.identifier}:`,
+          error
         );
       }
-    );
-
-    if (imageFiles.length === 0) {
-      return res.status(404).json({
-        error: "No usable image found",
-      });
     }
 
     // ========================================
-    // Prefer Largest Image
+    // Nothing Worked
     // ========================================
 
-    const imageFile =
-      imageFiles.sort(
-        (a: any, b: any) => {
-          const sizeA =
-            Number(a.size ?? 0);
-
-          const sizeB =
-            Number(b.size ?? 0);
-
-          return sizeB - sizeA;
-        }
-      )[0];
-
-    // ========================================
-    // Image URL
-    // ========================================
-
-    const imageUrl =
-      `https://archive.org/download/${document.identifier}/` +
-      encodeURIComponent(imageFile.name);
-
-    // ========================================
-    // Response
-    // ========================================
-
-    res.json({
-      image: imageUrl,
-      title:
-        document.title ?? "Unknown",
-      year:
-        document.year ?? null,
-      description:
-        document.description ?? null,
-      identifier:
-        document.identifier,
+    return res.status(404).json({
+      error:
+        "Could not find a usable image",
     });
   } catch (error) {
     console.error(

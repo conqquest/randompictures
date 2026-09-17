@@ -1,20 +1,31 @@
-import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+
 import { ColorRing } from "react-loader-spinner";
 
+import "./App.css";
 
-// ========================================
-// Categories
-// ========================================
 interface RandomImage {
   image: string;
   title: string;
   year: string | number | null;
   description: string | null;
   identifier: string;
+  category?: string;
+}
+
+interface PreparedImage {
+  data: RandomImage;
+  element: HTMLImageElement;
+  loaded: boolean;
 }
 
 const API_URL =
-  import.meta.env.VITE_API_URL || "http://localhost:5000";
+  import.meta.env.VITE_API_URL ||
+  "http://localhost:5000";
 
 const categories = {
   general: [
@@ -65,16 +76,17 @@ const categories = {
   ],
 };
 
-// ========================================
-// App
-// ========================================
-
 function App() {
   const [image, setImage] =
-    useState<RandomImage | null>(null);
+    useState<RandomImage | null>(
+      null
+    );
 
   const [loading, setLoading] =
     useState(true);
+
+  const [loadingNext, setLoadingNext] =
+    useState(false);
 
   const [category, setCategory] =
     useState("all");
@@ -85,21 +97,34 @@ function App() {
   const [showInfo, setShowInfo] =
     useState(false);
 
-  // ========================================
-  // Load Random Image
-  // ========================================
+  const preparedImageRef =
+    useRef<PreparedImage | null>(
+      null
+    );
 
-  const loadRandomImage = async (
-    selectedCategory = category
-  ) => {
-    try {
-      setLoading(true);
-      setShowInfo(false);
+  const requestIdRef =
+    useRef(0);
 
-     let url =
-  `${API_URL}/api/random`;
+  const currentCategoryRef =
+    useRef("all");
 
-      if (selectedCategory !== "all") {
+  const preparePromiseRef =
+    useRef<Promise<void> | null>(
+      null
+    );
+
+  const fetchRandomImage =
+    async (
+      selectedCategory: string,
+      signal?: AbortSignal
+    ): Promise<RandomImage> => {
+      let url =
+        `${API_URL}/api/random`;
+
+      if (
+        selectedCategory !==
+        "all"
+      ) {
         url +=
           `?category=${encodeURIComponent(
             selectedCategory
@@ -107,7 +132,10 @@ function App() {
       }
 
       const response =
-        await fetch(url);
+        await fetch(url, {
+          signal,
+          cache: "no-store",
+        });
 
       if (!response.ok) {
         throw new Error(
@@ -115,42 +143,538 @@ function App() {
         );
       }
 
-      const data: RandomImage =
-        await response.json();
+      return await response.json();
+    };
 
-      setImage(data);
-    } catch (error) {
-      console.error(
-        "Image loading error:",
-        error
+  /*
+   * Actually download the image.
+   *
+   * fetchPriority = low:
+   * background preparation should not
+   * compete aggressively with the
+   * image the user is currently viewing.
+   */
+  const prepareNextImage =
+    async (
+      selectedCategory: string
+    ) => {
+      if (
+        preparePromiseRef.current
+      ) {
+        return preparePromiseRef.current;
+      }
+
+      const promise =
+        (async () => {
+          try {
+            setLoadingNext(true);
+
+            const data =
+              await fetchRandomImage(
+                selectedCategory
+              );
+
+            /*
+             * If the category changed while
+             * this request was running,
+             * don't use the result.
+             */
+            if (
+              currentCategoryRef.current !==
+              selectedCategory
+            ) {
+              return;
+            }
+
+            const img =
+              new Image();
+
+            img.decoding = "async";
+            img.fetchPriority =
+              "low";
+
+            const prepared:
+              PreparedImage = {
+              data,
+              element: img,
+              loaded: false,
+            };
+
+            preparedImageRef.current =
+              prepared;
+
+            await new Promise<void>(
+              (
+                resolve,
+                reject
+              ) => {
+                img.onload =
+                  () => {
+                    prepared.loaded =
+                      true;
+
+                    resolve();
+                  };
+
+                img.onerror =
+                  () => {
+                    if (
+                      preparedImageRef
+                        .current ===
+                      prepared
+                    ) {
+                      preparedImageRef.current =
+                        null;
+                    }
+
+                    reject(
+                      new Error(
+                        "Failed to preload image"
+                      )
+                    );
+                  };
+
+                img.src =
+                  data.image;
+              }
+            );
+          } catch (error) {
+            console.error(
+              "Background image preparation error:",
+              error
+            );
+          } finally {
+            setLoadingNext(false);
+          }
+        })();
+
+      preparePromiseRef.current =
+        promise;
+
+      try {
+        await promise;
+      } finally {
+        preparePromiseRef.current =
+          null;
+      }
+    };
+
+  /*
+   * High-priority browser image load.
+   *
+   * Used when the user clicks and the
+   * prepared image isn't ready.
+   */
+  const loadImageWithPriority =
+    (
+      data: RandomImage
+    ): Promise<HTMLImageElement> => {
+      return new Promise(
+        (
+          resolve,
+          reject
+        ) => {
+          const img =
+            new Image();
+
+          img.decoding = "async";
+          img.fetchPriority =
+            "high";
+
+          img.onload =
+            async () => {
+              try {
+                if (
+                  "decode" in img
+                ) {
+                  await img.decode();
+                }
+              } catch {
+                // Image is already loaded.
+              }
+
+              resolve(img);
+            };
+
+          img.onerror = () => {
+            reject(
+              new Error(
+                "Image download failed"
+              )
+            );
+          };
+
+          img.src =
+            data.image;
+        }
       );
-    } finally {
-      setLoading(false);
-    }
-  };
+    };
 
-  // ========================================
-  // Initial Image
-  // ========================================
+  /*
+   * First image.
+   */
+  const loadInitialImage =
+    async () => {
+      const requestId =
+        ++requestIdRef.current;
+
+      try {
+        setLoading(true);
+
+        const data =
+          await fetchRandomImage(
+            "all"
+          );
+
+        if (
+          requestId !==
+          requestIdRef.current
+        ) {
+          return;
+        }
+
+        /*
+         * First image gets HIGH priority.
+         */
+        await loadImageWithPriority(
+          data
+        );
+
+        if (
+          requestId !==
+          requestIdRef.current
+        ) {
+          return;
+        }
+
+        setImage(data);
+
+        /*
+         * Immediately start preparing
+         * image #2 in the background.
+         */
+        prepareNextImage(
+          "all"
+        );
+      } catch (error) {
+        console.error(
+          "Initial image error:",
+          error
+        );
+      } finally {
+        if (
+          requestId ===
+          requestIdRef.current
+        ) {
+          setLoading(false);
+        }
+      }
+    };
+
+  /*
+   * User clicked the screen.
+   */
+  const loadRandomImage =
+    async () => {
+      const requestId =
+        ++requestIdRef.current;
+
+      const selectedCategory =
+        currentCategoryRef.current;
+
+      setShowInfo(false);
+
+      /*
+       * IMPORTANT:
+       * Show loader immediately.
+       */
+      setLoading(true);
+
+      const prepared =
+        preparedImageRef.current;
+
+      /*
+       * CASE 1:
+       * Background image is completely
+       * ready.
+       *
+       * Swap immediately.
+       */
+      if (
+        prepared &&
+        prepared.loaded
+      ) {
+        preparedImageRef.current =
+          null;
+
+        setImage(
+          prepared.data
+        );
+
+        setLoading(false);
+
+        /*
+         * Start preparing image after
+         * the newly displayed image.
+         */
+        prepareNextImage(
+          selectedCategory
+        );
+
+        return;
+      }
+
+      /*
+       * CASE 2:
+       * A background image exists but
+       * hasn't finished downloading.
+       *
+       * Give that exact image HIGH
+       * priority instead of waiting for
+       * another API request.
+       */
+      if (
+        prepared &&
+        !prepared.loaded
+      ) {
+        prepared.element.fetchPriority =
+          "high";
+
+        try {
+          await new Promise<void>(
+            (
+              resolve,
+              reject
+            ) => {
+              if (
+                prepared.loaded
+              ) {
+                resolve();
+                return;
+              }
+
+              const previousOnLoad =
+                prepared
+                  .element.onload;
+
+              const previousOnError =
+                prepared
+                  .element.onerror;
+
+              prepared.element.onload =
+                async () => {
+                  if (
+                    previousOnLoad
+                  ) {
+                    previousOnLoad.call(
+                      prepared.element,
+                      new Event(
+                        "load"
+                      )
+                    );
+                  }
+
+                  prepared.loaded =
+                    true;
+
+                  resolve();
+                };
+
+              prepared.element.onerror =
+                () => {
+                  if (
+                    previousOnError
+                  ) {
+                    previousOnError.call(
+                      prepared.element,
+                      new Event(
+                        "error"
+                      )
+                    );
+                  }
+
+                  reject(
+                    new Error(
+                      "Prepared image failed"
+                    )
+                  );
+                };
+            }
+          );
+
+          if (
+            requestId !==
+            requestIdRef.current
+          ) {
+            return;
+          }
+
+          preparedImageRef.current =
+            null;
+
+          setImage(
+            prepared.data
+          );
+
+          setLoading(false);
+
+          prepareNextImage(
+            selectedCategory
+          );
+
+          return;
+        } catch {
+          preparedImageRef.current =
+            null;
+        }
+      }
+
+      /*
+       * CASE 3:
+       * No usable prepared image.
+       *
+       * Start a fresh API request
+       * immediately.
+       */
+      try {
+        const data =
+          await fetchRandomImage(
+            selectedCategory
+          );
+
+        if (
+          requestId !==
+          requestIdRef.current
+        ) {
+          return;
+        }
+
+        /*
+         * HIGH priority because the user
+         * explicitly clicked.
+         */
+        await loadImageWithPriority(
+          data
+        );
+
+        if (
+          requestId !==
+          requestIdRef.current
+        ) {
+          return;
+        }
+
+        setImage(data);
+
+        /*
+         * Prepare the following image.
+         */
+        prepareNextImage(
+          selectedCategory
+        );
+      } catch (error) {
+        console.error(
+          "Image loading error:",
+          error
+        );
+      } finally {
+        if (
+          requestId ===
+          requestIdRef.current
+        ) {
+          setLoading(false);
+        }
+      }
+    };
+
+  /*
+   * Category change.
+   */
+  const selectCategory =
+    async (
+      selectedCategory: string
+    ) => {
+      const requestId =
+        ++requestIdRef.current;
+
+      currentCategoryRef.current =
+        selectedCategory;
+
+      preparedImageRef.current =
+        null;
+
+      setCategory(
+        selectedCategory
+      );
+
+      setShowMenu(false);
+      setShowInfo(false);
+      setLoading(true);
+
+      try {
+        const data =
+          await fetchRandomImage(
+            selectedCategory
+          );
+
+        if (
+          requestId !==
+          requestIdRef.current
+        ) {
+          return;
+        }
+
+        await loadImageWithPriority(
+          data
+        );
+
+        if (
+          requestId !==
+          requestIdRef.current
+        ) {
+          return;
+        }
+
+        setImage(data);
+
+        prepareNextImage(
+          selectedCategory
+        );
+      } catch (error) {
+        console.error(
+          "Category image error:",
+          error
+        );
+      } finally {
+        if (
+          requestId ===
+          requestIdRef.current
+        ) {
+          setLoading(false);
+        }
+      }
+    };
 
   useEffect(() => {
-    loadRandomImage("all");
+    currentCategoryRef.current =
+      "all";
+
+    loadInitialImage();
   }, []);
 
-  // ========================================
-  // Loading Screen
-  // ========================================
-
-  if (loading) {
+  if (
+    loading &&
+    !image
+  ) {
     return (
       <main className="screen">
         <ColorRing
           visible={true}
           height="65"
           width="65"
-          ariaLabel="color-ring-loading"
+          ariaLabel="loading"
           wrapperStyle={{}}
-          wrapperClass="color-ring-wrapper"
+          wrapperClass=""
           colors={[
             "#e15b64",
             "#f47e60",
@@ -163,10 +687,6 @@ function App() {
     );
   }
 
-  // ========================================
-  // Error
-  // ========================================
-
   if (!image) {
     return (
       <main className="screen">
@@ -177,28 +697,40 @@ function App() {
     );
   }
 
-  // ========================================
-  // Main UI
-  // ========================================
-
   return (
     <main
       className="screen"
-      onClick={() =>
-        loadRandomImage()
+      onClick={
+        loading
+          ? undefined
+          : loadRandomImage
       }
     >
-      {/* Image */}
-
       <img
         src={image.image}
         alt={image.title}
         className="random-image"
       />
 
-      {/* ================================= */}
-      {/* Three Dot Menu */}
-      {/* ================================= */}
+      {loading && (
+        <div className="image-loading">
+          <ColorRing
+            visible={true}
+            height="65"
+            width="65"
+            ariaLabel="loading"
+            wrapperStyle={{}}
+            wrapperClass=""
+            colors={[
+              "#e15b64",
+              "#f47e60",
+              "#f8b26a",
+              "#abbd81",
+              "#849b87",
+            ]}
+          />
+        </div>
+      )}
 
       <button
         className="menu-button"
@@ -207,16 +739,13 @@ function App() {
           event.stopPropagation();
 
           setShowMenu(
-            (previous) => !previous
+            (previous) =>
+              !previous
           );
         }}
       >
         ⋮
       </button>
-
-      {/* ================================= */}
-      {/* Category Menu */}
-      {/* ================================= */}
 
       {showMenu && (
         <div
@@ -225,8 +754,6 @@ function App() {
             event.stopPropagation()
           }
         >
-          {/* General */}
-
           <h3>General</h3>
 
           {categories.general.map(
@@ -238,14 +765,11 @@ function App() {
                     ? "category active"
                     : "category"
                 }
-                onClick={() => {
-                  setCategory(item);
-                  setShowMenu(false);
-
-                  loadRandomImage(
+                onClick={() =>
+                  selectCategory(
                     item
-                  );
-                }}
+                  )
+                }
               >
                 {item === "all"
                   ? "All"
@@ -256,8 +780,6 @@ function App() {
               </button>
             )
           )}
-
-          {/* India */}
 
           <h3>India</h3>
 
@@ -270,14 +792,11 @@ function App() {
                     ? "category active"
                     : "category"
                 }
-                onClick={() => {
-                  setCategory(item);
-                  setShowMenu(false);
-
-                  loadRandomImage(
+                onClick={() =>
+                  selectCategory(
                     item
-                  );
-                }}
+                  )
+                }
               >
                 {item}
               </button>
@@ -286,10 +805,6 @@ function App() {
         </div>
       )}
 
-      {/* ================================= */}
-      {/* Bottom Information */}
-      {/* ================================= */}
-
       <div
         className="bottom-overlay"
         onClick={(event) =>
@@ -297,7 +812,9 @@ function App() {
         }
       >
         <div className="image-info">
-          <h1>{image.title}</h1>
+          <h1>
+            {image.title}
+          </h1>
 
           {image.year && (
             <p className="year">
@@ -316,10 +833,6 @@ function App() {
         </div>
       </div>
 
-      {/* ================================= */}
-      {/* Information Modal */}
-      {/* ================================= */}
-
       {showInfo && (
         <div
           className="info-overlay"
@@ -328,8 +841,6 @@ function App() {
           }
         >
           <div className="info-card">
-            {/* Close */}
-
             <button
               className="close-button"
               aria-label="Close"
@@ -340,19 +851,15 @@ function App() {
               ×
             </button>
 
-            {/* Title */}
-
-            <h2>{image.title}</h2>
-
-            {/* Year */}
+            <h2>
+              {image.title}
+            </h2>
 
             {image.year && (
               <p className="info-year">
                 {image.year}
               </p>
             )}
-
-            {/* Description */}
 
             {image.description ? (
               <p className="info-description">
@@ -366,9 +873,16 @@ function App() {
               </p>
             )}
 
-            {/* Source */}
-
-           
+            <a
+              href={`https://archive.org/details/${image.identifier}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(event) =>
+                event.stopPropagation()
+              }
+            >
+              View on Internet Archive
+            </a>
           </div>
         </div>
       )}

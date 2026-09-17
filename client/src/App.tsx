@@ -85,9 +85,6 @@ function App() {
   const [loading, setLoading] =
     useState(true);
 
-  const [loadingNext, setLoadingNext] =
-    useState(false);
-
   const [category, setCategory] =
     useState("all");
 
@@ -97,43 +94,101 @@ function App() {
   const [showInfo, setShowInfo] =
     useState(false);
 
+  const [waitingForNext, setWaitingForNext] =
+    useState(false);
+
+  /*
+   * Image prepared in background.
+   */
   const preparedImageRef =
     useRef<PreparedImage | null>(
       null
     );
 
-  const requestIdRef =
-    useRef(0);
+  /*
+   * Prevent multiple preload requests.
+   */
+  const preparingRef =
+    useRef(false);
 
-  const currentCategoryRef =
+  /*
+   * Prevent React StrictMode from
+   * starting the initial request twice.
+   */
+  const initializedRef =
+    useRef(false);
+
+  /*
+   * IDs already shown during this
+   * browser session.
+   */
+  const seenIdsRef =
+    useRef<Set<string>>(
+      new Set()
+    );
+
+  const categoryRef =
     useRef("all");
 
-  const preparePromiseRef =
-    useRef<Promise<void> | null>(
+  /*
+   * Current background preload.
+   */
+  const preloadImageRef =
+    useRef<HTMLImageElement | null>(
       null
     );
 
+  /* ---------------- API ---------------- */
+
   const fetchRandomImage =
     async (
-      selectedCategory: string,
-      signal?: AbortSignal
+      selectedCategory: string
     ): Promise<RandomImage> => {
-      let url =
-        `${API_URL}/api/random`;
+      const seenIds =
+        Array.from(
+          seenIdsRef.current
+        );
+
+      const params =
+        new URLSearchParams();
 
       if (
         selectedCategory !==
         "all"
       ) {
-        url +=
-          `?category=${encodeURIComponent(
-            selectedCategory
-          )}`;
+        params.set(
+          "category",
+          selectedCategory
+        );
       }
+
+      /*
+       * Only send the most recent IDs.
+       *
+       * This prevents immediate/recent
+       * repeats without creating a huge URL.
+       */
+      if (
+        seenIds.length > 0
+      ) {
+        params.set(
+          "exclude",
+          seenIds
+            .slice(-15)
+            .join(",")
+        );
+      }
+
+      const query =
+        params.toString();
+
+      const url =
+        query.length > 0
+          ? `${API_URL}/api/random?${query}`
+          : `${API_URL}/api/random`;
 
       const response =
         await fetch(url, {
-          signal,
           cache: "no-store",
         });
 
@@ -143,131 +198,18 @@ function App() {
         );
       }
 
-      return await response.json();
+      return response.json();
     };
 
-  /*
-   * Actually download the image.
-   *
-   * fetchPriority = low:
-   * background preparation should not
-   * compete aggressively with the
-   * image the user is currently viewing.
-   */
-  const prepareNextImage =
-    async (
-      selectedCategory: string
-    ) => {
-      if (
-        preparePromiseRef.current
-      ) {
-        return preparePromiseRef.current;
-      }
+  /* ---------------- Browser image loading ---------------- */
 
-      const promise =
-        (async () => {
-          try {
-            setLoadingNext(true);
-
-            const data =
-              await fetchRandomImage(
-                selectedCategory
-              );
-
-            /*
-             * If the category changed while
-             * this request was running,
-             * don't use the result.
-             */
-            if (
-              currentCategoryRef.current !==
-              selectedCategory
-            ) {
-              return;
-            }
-
-            const img =
-              new Image();
-
-            img.decoding = "async";
-            img.fetchPriority =
-              "low";
-
-            const prepared:
-              PreparedImage = {
-              data,
-              element: img,
-              loaded: false,
-            };
-
-            preparedImageRef.current =
-              prepared;
-
-            await new Promise<void>(
-              (
-                resolve,
-                reject
-              ) => {
-                img.onload =
-                  () => {
-                    prepared.loaded =
-                      true;
-
-                    resolve();
-                  };
-
-                img.onerror =
-                  () => {
-                    if (
-                      preparedImageRef
-                        .current ===
-                      prepared
-                    ) {
-                      preparedImageRef.current =
-                        null;
-                    }
-
-                    reject(
-                      new Error(
-                        "Failed to preload image"
-                      )
-                    );
-                  };
-
-                img.src =
-                  data.image;
-              }
-            );
-          } catch (error) {
-            console.error(
-              "Background image preparation error:",
-              error
-            );
-          } finally {
-            setLoadingNext(false);
-          }
-        })();
-
-      preparePromiseRef.current =
-        promise;
-
-      try {
-        await promise;
-      } finally {
-        preparePromiseRef.current =
-          null;
-      }
-    };
-
-  /*
-   * High-priority browser image load.
-   *
-   * Used when the user clicks and the
-   * prepared image isn't ready.
-   */
-  const loadImageWithPriority =
+  const downloadImage =
     (
-      data: RandomImage
+      data: RandomImage,
+      priority:
+        | "high"
+        | "low"
+        | "auto"
     ): Promise<HTMLImageElement> => {
       return new Promise(
         (
@@ -279,7 +221,7 @@ function App() {
 
           img.decoding = "async";
           img.fetchPriority =
-            "high";
+            priority;
 
           img.onload =
             async () => {
@@ -290,19 +232,20 @@ function App() {
                   await img.decode();
                 }
               } catch {
-                // Image is already loaded.
+                // Already loaded.
               }
 
               resolve(img);
             };
 
-          img.onerror = () => {
-            reject(
-              new Error(
-                "Image download failed"
-              )
-            );
-          };
+          img.onerror =
+            () => {
+              reject(
+                new Error(
+                  "Image download failed"
+                )
+              );
+            };
 
           img.src =
             data.image;
@@ -310,14 +253,140 @@ function App() {
       );
     };
 
-  /*
-   * First image.
-   */
+  /* ---------------- Preload ---------------- */
+
+  const prepareNextImage =
+    async (
+      selectedCategory: string
+    ) => {
+      if (
+        preparingRef.current
+      ) {
+        return;
+      }
+
+      if (
+        preparedImageRef.current
+      ) {
+        return;
+      }
+
+      preparingRef.current =
+        true;
+
+      try {
+        /*
+         * Get next random image.
+         */
+        const data =
+          await fetchRandomImage(
+            selectedCategory
+          );
+
+        /*
+         * Category may have changed
+         * while API was responding.
+         */
+        if (
+          categoryRef.current !==
+          selectedCategory
+        ) {
+          return;
+        }
+
+        /*
+         * Create low-priority browser
+         * download.
+         */
+        const img =
+          new Image();
+
+        img.decoding = "async";
+        img.fetchPriority =
+          "low";
+
+        const prepared: PreparedImage =
+          {
+            data,
+            element: img,
+            loaded: false,
+          };
+
+        preparedImageRef.current =
+          prepared;
+
+        preloadImageRef.current =
+          img;
+
+        /*
+         * ACTUALLY download the image.
+         */
+        await new Promise<void>(
+          (
+            resolve,
+            reject
+          ) => {
+            img.onload =
+              async () => {
+                try {
+                  if (
+                    "decode" in img
+                  ) {
+                    await img.decode();
+                  }
+                } catch {
+                  // Already loaded.
+                }
+
+                prepared.loaded =
+                  true;
+
+                resolve();
+              };
+
+            img.onerror =
+              () => {
+                if (
+                  preparedImageRef
+                    .current ===
+                  prepared
+                ) {
+                  preparedImageRef.current =
+                    null;
+                }
+
+                reject(
+                  new Error(
+                    "Preload failed"
+                  )
+                );
+              };
+
+            img.src =
+              data.image;
+          }
+        );
+      } catch (error) {
+        console.error(
+          "Preload error:",
+          error
+        );
+
+        preparedImageRef.current =
+          null;
+      } finally {
+        preparingRef.current =
+          false;
+
+        preloadImageRef.current =
+          null;
+      }
+    };
+
+  /* ---------------- Initial Image ---------------- */
+
   const loadInitialImage =
     async () => {
-      const requestId =
-        ++requestIdRef.current;
-
       try {
         setLoading(true);
 
@@ -326,80 +395,57 @@ function App() {
             "all"
           );
 
-        if (
-          requestId !==
-          requestIdRef.current
-        ) {
-          return;
-        }
+        const img =
+          await downloadImage(
+            data,
+            "high"
+          );
 
         /*
-         * First image gets HIGH priority.
+         * Browser has completely
+         * downloaded and decoded it.
          */
-        await loadImageWithPriority(
-          data
-        );
-
-        if (
-          requestId !==
-          requestIdRef.current
-        ) {
-          return;
+        if (img.complete) {
+          setImage(data);
         }
 
-        setImage(data);
+        seenIdsRef.current.add(
+          data.identifier
+        );
 
         /*
-         * Immediately start preparing
-         * image #2 in the background.
+         * Start preparing image #2.
          */
-        prepareNextImage(
-          "all"
-        );
+        prepareNextImage("all");
       } catch (error) {
         console.error(
           "Initial image error:",
           error
         );
       } finally {
-        if (
-          requestId ===
-          requestIdRef.current
-        ) {
-          setLoading(false);
-        }
+        setLoading(false);
       }
     };
 
-  /*
-   * User clicked the screen.
-   */
-  const loadRandomImage =
-    async () => {
-      const requestId =
-        ++requestIdRef.current;
+  /* ---------------- Click ---------------- */
 
-      const selectedCategory =
-        currentCategoryRef.current;
+  const loadNextImage =
+    async () => {
+      if (waitingForNext) {
+        return;
+      }
 
       setShowInfo(false);
 
       /*
-       * IMPORTANT:
-       * Show loader immediately.
+       * If next image is already
+       * completely downloaded:
+       *
+       * INSTANT SWAP.
        */
-      setLoading(true);
-
       const prepared =
         preparedImageRef.current;
 
-      /*
-       * CASE 1:
-       * Background image is completely
-       * ready.
-       *
-       * Swap immediately.
-       */
       if (
         prepared &&
         prepared.loaded
@@ -411,197 +457,137 @@ function App() {
           prepared.data
         );
 
-        setLoading(false);
+        seenIdsRef.current.add(
+          prepared.data.identifier
+        );
 
         /*
-         * Start preparing image after
-         * the newly displayed image.
+         * Immediately begin preparing
+         * the next one.
          */
         prepareNextImage(
-          selectedCategory
+          categoryRef.current
         );
 
         return;
       }
 
       /*
-       * CASE 2:
-       * A background image exists but
-       * hasn't finished downloading.
+       * Next image isn't ready.
        *
-       * Give that exact image HIGH
-       * priority instead of waiting for
-       * another API request.
+       * Show fullscreen loader immediately.
        */
-      if (
-        prepared &&
-        !prepared.loaded
-      ) {
-        prepared.element.fetchPriority =
-          "high";
+      setWaitingForNext(true);
 
-        try {
-          await new Promise<void>(
-            (
-              resolve,
-              reject
-            ) => {
-              if (
-                prepared.loaded
-              ) {
-                resolve();
-                return;
-              }
-
-              const previousOnLoad =
-                prepared
-                  .element.onload;
-
-              const previousOnError =
-                prepared
-                  .element.onerror;
-
-              prepared.element.onload =
-                async () => {
-                  if (
-                    previousOnLoad
-                  ) {
-                    previousOnLoad.call(
-                      prepared.element,
-                      new Event(
-                        "load"
-                      )
-                    );
-                  }
-
-                  prepared.loaded =
-                    true;
-
-                  resolve();
-                };
-
-              prepared.element.onerror =
-                () => {
-                  if (
-                    previousOnError
-                  ) {
-                    previousOnError.call(
-                      prepared.element,
-                      new Event(
-                        "error"
-                      )
-                    );
-                  }
-
-                  reject(
-                    new Error(
-                      "Prepared image failed"
-                    )
-                  );
-                };
-            }
-          );
-
-          if (
-            requestId !==
-            requestIdRef.current
-          ) {
-            return;
-          }
-
-          preparedImageRef.current =
-            null;
-
-          setImage(
-            prepared.data
-          );
-
-          setLoading(false);
-
-          prepareNextImage(
-            selectedCategory
-          );
-
-          return;
-        } catch {
-          preparedImageRef.current =
-            null;
-        }
-      }
-
-      /*
-       * CASE 3:
-       * No usable prepared image.
-       *
-       * Start a fresh API request
-       * immediately.
-       */
       try {
-        const data =
-          await fetchRandomImage(
-            selectedCategory
+        /*
+         * If a background image is
+         * currently downloading, abandon
+         * that low-priority request and
+         * download the same image with
+         * high priority.
+         */
+        if (
+          prepared &&
+          !prepared.loaded
+        ) {
+          /*
+           * Stop current browser download.
+           */
+          prepared.element.src =
+            "";
+
+          const data =
+            prepared.data;
+
+          preparedImageRef.current =
+            null;
+
+          /*
+           * User explicitly clicked,
+           * therefore HIGH priority.
+           */
+          await downloadImage(
+            data,
+            "high"
           );
 
-        if (
-          requestId !==
-          requestIdRef.current
-        ) {
-          return;
+          setImage(data);
+
+          seenIdsRef.current.add(
+            data.identifier
+          );
+        } else {
+          /*
+           * No prepared image exists.
+           *
+           * Get a completely new one.
+           */
+          const data =
+            await fetchRandomImage(
+              categoryRef.current
+            );
+
+          await downloadImage(
+            data,
+            "high"
+          );
+
+          setImage(data);
+
+          seenIdsRef.current.add(
+            data.identifier
+          );
         }
 
         /*
-         * HIGH priority because the user
-         * explicitly clicked.
-         */
-        await loadImageWithPriority(
-          data
-        );
-
-        if (
-          requestId !==
-          requestIdRef.current
-        ) {
-          return;
-        }
-
-        setImage(data);
-
-        /*
-         * Prepare the following image.
+         * Prepare the image after this one.
          */
         prepareNextImage(
-          selectedCategory
+          categoryRef.current
         );
       } catch (error) {
         console.error(
-          "Image loading error:",
+          "Next image error:",
           error
         );
       } finally {
-        if (
-          requestId ===
-          requestIdRef.current
-        ) {
-          setLoading(false);
-        }
+        setWaitingForNext(false);
       }
     };
 
-  /*
-   * Category change.
-   */
+  /* ---------------- Category ---------------- */
+
   const selectCategory =
     async (
       selectedCategory: string
     ) => {
-      const requestId =
-        ++requestIdRef.current;
-
-      currentCategoryRef.current =
-        selectedCategory;
+      /*
+       * Clear prepared image from
+       * previous category.
+       */
+      if (
+        preloadImageRef.current
+      ) {
+        preloadImageRef.current.src =
+          "";
+      }
 
       preparedImageRef.current =
         null;
+
+      preparingRef.current =
+        false;
+
+      categoryRef.current =
+        selectedCategory;
+
+      /*
+       * Reset seen IDs for the new
+       * category.
+       */
+      seenIdsRef.current =
+        new Set();
 
       setCategory(
         selectedCategory
@@ -609,7 +595,7 @@ function App() {
 
       setShowMenu(false);
       setShowInfo(false);
-      setLoading(true);
+      setWaitingForNext(true);
 
       try {
         const data =
@@ -617,50 +603,49 @@ function App() {
             selectedCategory
           );
 
-        if (
-          requestId !==
-          requestIdRef.current
-        ) {
-          return;
-        }
-
-        await loadImageWithPriority(
-          data
+        await downloadImage(
+          data,
+          "high"
         );
-
-        if (
-          requestId !==
-          requestIdRef.current
-        ) {
-          return;
-        }
 
         setImage(data);
 
+        seenIdsRef.current.add(
+          data.identifier
+        );
+
+        /*
+         * Start next image preparation.
+         */
         prepareNextImage(
           selectedCategory
         );
       } catch (error) {
         console.error(
-          "Category image error:",
+          "Category error:",
           error
         );
       } finally {
-        if (
-          requestId ===
-          requestIdRef.current
-        ) {
-          setLoading(false);
-        }
+        setWaitingForNext(false);
       }
     };
 
+  /* ---------------- Initial effect ---------------- */
+
   useEffect(() => {
-    currentCategoryRef.current =
-      "all";
+    if (
+      initializedRef.current
+    ) {
+      return;
+    }
+
+    initializedRef.current =
+      true;
 
     loadInitialImage();
   }, []);
+
+  /* ---------------- Loading screen ---------------- */
 
   if (
     loading &&
@@ -700,11 +685,11 @@ function App() {
   return (
     <main
       className="screen"
-      onClick={
-        loading
-          ? undefined
-          : loadRandomImage
-      }
+      onClick={() => {
+        if (!showMenu && !showInfo) {
+          loadNextImage();
+        }
+      }}
     >
       <img
         src={image.image}
@@ -712,7 +697,10 @@ function App() {
         className="random-image"
       />
 
-      {loading && (
+      /*
+       * Loader is now FULLSCREEN + CENTERED.
+       */
+      {waitingForNext && (
         <div className="image-loading">
           <ColorRing
             visible={true}

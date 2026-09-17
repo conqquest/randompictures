@@ -141,12 +141,8 @@ const categoryQueries: Record<string, string> = {
     "Indian freedom movement OR Indian independence",
 };
 
-/*
- * Redis / Render Key Value
- *
- * The application still works without Redis.
- * If REDIS_URL exists, Redis caching is enabled.
- */
+/* ---------------- Redis ---------------- */
+
 const redisUrl =
   process.env.REDIS_URL;
 
@@ -184,9 +180,6 @@ if (redis) {
 
 const CACHE_TTL = 600;
 
-/*
- * Build a stable Redis key.
- */
 const getCacheKey = (
   category: string
 ) =>
@@ -194,10 +187,34 @@ const getCacheKey = (
     category
   )}`;
 
-/*
- * Search Internet Archive and build
- * a reusable pool of usable images.
- */
+/* ---------------- Helpers ---------------- */
+
+const shuffle = <T>(
+  array: T[]
+): T[] => {
+  const result = [...array];
+
+  for (
+    let i = result.length - 1;
+    i > 0;
+    i--
+  ) {
+    const j =
+      Math.floor(
+        Math.random() * (i + 1)
+      );
+
+    [result[i], result[j]] = [
+      result[j],
+      result[i],
+    ];
+  }
+
+  return result;
+};
+
+/* ---------------- Internet Archive ---------------- */
+
 const buildImagePool = async (
   category: string
 ): Promise<RandomImage[]> => {
@@ -218,7 +235,7 @@ const buildImagePool = async (
 
   const randomPage =
     Math.floor(
-      Math.random() * 20
+      Math.random() * 50
     ) + 1;
 
   const searchUrl =
@@ -260,16 +277,19 @@ const buildImagePool = async (
   }
 
   /*
-   * Process several Archive items
-   * simultaneously.
+   * Shuffle Archive results so that
+   * the same first result isn't always
+   * selected.
    */
   const shuffled =
-    [...documents].sort(
-      () => Math.random() - 0.5
-    );
+    shuffle(documents);
 
+  /*
+   * Get metadata for several items
+   * concurrently.
+   */
   const candidates =
-    shuffled.slice(0, 12);
+    shuffled.slice(0, 20);
 
   const results =
     await Promise.all(
@@ -299,6 +319,9 @@ const buildImagePool = async (
             const files =
               metadata.files ?? [];
 
+            /*
+             * Only real image files.
+             */
             const imageFiles =
               files.filter(
                 (file) => {
@@ -343,8 +366,8 @@ const buildImagePool = async (
             }
 
             /*
-             * Keep your requested behavior:
-             * choose the largest image file.
+             * Keep your requirement:
+             * choose the largest image.
              */
             const imageFile =
               imageFiles.sort(
@@ -417,23 +440,17 @@ const buildImagePool = async (
   );
 };
 
-/*
- * Get an image pool.
- *
- * Redis hit:
- *     return cached pool immediately.
- *
- * Redis miss:
- *     query Internet Archive,
- *     build pool,
- *     cache it.
- */
+/* ---------------- Redis Pool ---------------- */
+
 const getImagePool = async (
   category: string
 ): Promise<RandomImage[]> => {
   const cacheKey =
     getCacheKey(category);
 
+  /*
+   * Redis cache hit.
+   */
   if (
     redis &&
     redis.isReady
@@ -446,7 +463,7 @@ const getImagePool = async (
 
       if (cached) {
         console.log(
-          `Redis cache HIT: ${category}`
+          `Redis HIT: ${category}`
         );
 
         return JSON.parse(
@@ -461,8 +478,11 @@ const getImagePool = async (
     }
   }
 
+  /*
+   * Redis cache miss.
+   */
   console.log(
-    `Redis cache MISS: ${category}`
+    `Redis MISS: ${category}`
   );
 
   const pool =
@@ -485,7 +505,7 @@ const getImagePool = async (
       );
 
       console.log(
-        `Cached ${pool.length} images for ${category}`
+        `Cached ${pool.length} images: ${category}`
       );
     } catch (error) {
       console.error(
@@ -498,17 +518,24 @@ const getImagePool = async (
   return pool;
 };
 
-app.get("/api/health", (_req, res) => {
-  res.json({
-    status: "ok",
-    redis:
-      redis?.isReady === true
-        ? "connected"
-        : "not connected",
-    message:
-      "RandomPictures API is running",
-  });
-});
+/* ---------------- Routes ---------------- */
+
+app.get(
+  "/api/health",
+  (_req, res) => {
+    res.json({
+      status: "ok",
+
+      redis:
+        redis?.isReady === true
+          ? "connected"
+          : "not connected",
+
+      message:
+        "RandomPictures API is running",
+    });
+  }
+);
 
 app.get(
   "/api/random",
@@ -519,6 +546,29 @@ app.get(
         "string"
           ? req.query.category
           : "all";
+
+      /*
+       * IDs already shown by this browser.
+       *
+       * Example:
+       * ?exclude=A,B,C
+       */
+      const excludeParam =
+        typeof req.query.exclude ===
+        "string"
+          ? req.query.exclude
+          : "";
+
+      const excludedIds =
+        new Set(
+          excludeParam
+            .split(",")
+            .map(
+              (id) =>
+                id.trim()
+            )
+            .filter(Boolean)
+        );
 
       const pool =
         await getImagePool(
@@ -534,11 +584,40 @@ app.get(
         });
       }
 
+      /*
+       * Don't immediately repeat
+       * images already shown.
+       */
+      let available =
+        pool.filter(
+          (item) =>
+            !excludedIds.has(
+              item.identifier
+            )
+        );
+
+      /*
+       * If the exclude list has become
+       * larger than the current Redis
+       * pool, use the pool again.
+       *
+       * Internet Archive is huge, so
+       * this should rarely happen.
+       */
+      if (
+        available.length === 0
+      ) {
+        available = pool;
+      }
+
+      /*
+       * Random selection.
+       */
       const randomImage =
-        pool[
+        available[
           Math.floor(
             Math.random() *
-              pool.length
+              available.length
           )
         ];
 

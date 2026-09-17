@@ -698,11 +698,13 @@ function App() {
         }}
       />
 
-      <img
-        src={image.image}
-        alt={image.title}
-        className="random-image"
-      />
+      <div className="image-container">
+        <img
+          src={image.image}
+          alt={image.title}
+          className="random-image"
+        />
+      </div>
 
       /*
        * Loader is now FULLSCREEN + CENTERED.

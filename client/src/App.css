@@ -87,18 +87,37 @@ button {
 
 /* =========================================
    FOREGROUND ORIGINAL IMAGE
-   NEVER CROP THE ACTUAL IMAGE
+   NEVER CROP THE ACTUAL IMAGE & ALWAYS CENTER
 ========================================= */
 
-.random-image {
-  position: relative;
+.image-container {
+  position: absolute;
+
+  inset: 0;
 
   z-index: 1;
 
-  width: 100%;
-  height: 100%;
+  display: flex;
+
+  align-items: center;
+  justify-content: center;
+
+  overflow: hidden;
+
+  pointer-events: none;
+}
+
+.random-image {
+  max-width: 100%;
+
+  max-height: 100%;
+
+  width: auto;
+
+  height: auto;
 
   object-fit: contain;
+
   object-position: center;
 
   display: block;

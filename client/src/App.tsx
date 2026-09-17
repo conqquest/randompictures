@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { ColorRing } from "react-loader-spinner";
 
+
+// ========================================
+// Categories
+// ========================================
 interface RandomImage {
   image: string;
   title: string;
@@ -9,9 +13,8 @@ interface RandomImage {
   identifier: string;
 }
 
-// ========================================
-// Categories
-// ========================================
+const API_URL =
+  import.meta.env.VITE_API_URL || "http://localhost:5000";
 
 const categories = {
   general: [
@@ -93,8 +96,8 @@ function App() {
       setLoading(true);
       setShowInfo(false);
 
-      let url =
-        "http://localhost:5000/api/random";
+     let url =
+  `${API_URL}/api/random`;
 
       if (selectedCategory !== "all") {
         url +=

@@ -20,10 +20,6 @@ interface ArchiveDocument {
 interface ArchiveFile {
   name?: string;
   size?: string | number;
-  width?: string | number;
-  height?: string | number;
-  format?: string;
-  source?: string;
 }
 
 interface ArchiveMetadata {
@@ -324,147 +320,6 @@ const buildImagePool = async (
               metadata.files ?? [];
 
             /*
-             * Score an image file for
-             * web display quality.
-             */
-            const scoreImageFile = (
-              file: ArchiveFile
-            ): number => {
-              let score = 0;
-
-              const size =
-                Number(file.size ?? 0);
-
-              const width =
-                Number(
-                  file.width ?? 0
-                );
-
-              const height =
-                Number(
-                  file.height ?? 0
-                );
-
-              const name =
-                file.name?.toLowerCase() ??
-                "";
-
-              const source =
-                file.source?.toLowerCase() ??
-                "";
-
-              /*
-               * Width scoring.
-               */
-              if (width > 0) {
-                if (
-                  width >= 1200 &&
-                  width <= 2400
-                ) {
-                  score += 50;
-
-                  if (
-                    width >= 1600 &&
-                    width <= 2000
-                  ) {
-                    score += 20;
-                  }
-                } else if (
-                  width >= 800 &&
-                  width < 1200
-                ) {
-                  score += 30;
-                } else if (
-                  width > 2400 &&
-                  width <= 4000
-                ) {
-                  score += 15;
-                } else if (
-                  width < 400
-                ) {
-                  score -= 50;
-                } else if (
-                  width > 5000
-                ) {
-                  score -= 30;
-                }
-              }
-
-              /*
-               * File size scoring.
-               */
-              if (size > 0) {
-                const kb = size / 1024;
-                const mb = kb / 1024;
-
-                if (
-                  kb >= 200 &&
-                  kb <= 1500
-                ) {
-                  score += 40;
-
-                  if (
-                    kb >= 300 &&
-                    kb <= 800
-                  ) {
-                    score += 15;
-                  }
-                } else if (
-                  mb > 1.5 &&
-                  mb <= 3
-                ) {
-                  score += 5;
-                } else if (
-                  mb > 3
-                ) {
-                  score -= 40;
-                } else if (
-                  kb < 50
-                ) {
-                  score -= 60;
-                } else if (
-                  kb < 200
-                ) {
-                  score -= 10;
-                }
-              }
-
-              /*
-               * Format scoring.
-               */
-              if (
-                name.endsWith(
-                  ".jpg"
-                ) ||
-                name.endsWith(
-                  ".jpeg"
-                )
-              ) {
-                score += 10;
-              } else if (
-                name.endsWith(
-                  ".webp"
-                )
-              ) {
-                score += 12;
-              }
-
-              /*
-               * Derivative images are
-               * usually web-optimized.
-               */
-              if (
-                source.includes(
-                  "derivative"
-                )
-              ) {
-                score += 25;
-              }
-
-              return score;
-            };
-
-            /*
              * Only real image files.
              */
             const imageFiles =
@@ -511,18 +366,29 @@ const buildImagePool = async (
             }
 
             /*
-             * Select the best web-optimized
-             * image instead of the largest.
+             * Keep your requirement:
+             * choose the largest image.
              */
             const imageFile =
               imageFiles.sort(
-                (a, b) =>
-                  scoreImageFile(b) -
-                  scoreImageFile(a)
+                (a, b) => {
+                  const sizeA =
+                    Number(
+                      a.size ?? 0
+                    );
+
+                  const sizeB =
+                    Number(
+                      b.size ?? 0
+                    );
+
+                  return (
+                    sizeB - sizeA
+                  );
+                }
               )[0];
 
             if (
-              !imageFile ||
               !imageFile.name
             ) {
               return null;

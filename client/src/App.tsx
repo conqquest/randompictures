@@ -870,16 +870,7 @@ function App() {
               </p>
             )}
 
-            <a
-              href={`https://archive.org/details/${image.identifier}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(event) =>
-                event.stopPropagation()
-              }
-            >
-              View on Internet Archive
-            </a>
+           
           </div>
         </div>
       )}

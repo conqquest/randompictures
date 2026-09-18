@@ -98,18 +98,19 @@ function App() {
     useState(false);
 
   /*
-   * Image prepared in background.
+   * Queue of prepared images (max 3).
    */
-  const preparedImageRef =
-    useRef<PreparedImage | null>(
-      null
-    );
+  const queueRef =
+    useRef<PreparedImage[]>([]);
 
   /*
-   * Prevent multiple preload requests.
+   * Number of images currently
+   * being fetched/downloaded.
    */
-  const preparingRef =
-    useRef(false);
+  const activeDownloadsRef =
+    useRef(0);
+
+  const MAX_QUEUE = 3;
 
   /*
    * Prevent React StrictMode from
@@ -129,14 +130,6 @@ function App() {
 
   const categoryRef =
     useRef("all");
-
-  /*
-   * Current background preload.
-   */
-  const preloadImageRef =
-    useRef<HTMLImageElement | null>(
-      null
-    );
 
   /* ---------------- API ---------------- */
 
@@ -253,135 +246,138 @@ function App() {
       );
     };
 
-  /* ---------------- Preload ---------------- */
+  /* ---------------- Queue Fill ---------------- */
 
-  const prepareNextImage =
-    async (
-      selectedCategory: string
-    ) => {
+  const fillQueue = (
+    selectedCategory: string
+  ) => {
+    const fill = async () => {
+      /*
+       * Don't exceed max queue size
+       * or max concurrent downloads.
+       */
+      const totalPending =
+        queueRef.current.length +
+        activeDownloadsRef.current;
+
       if (
-        preparingRef.current
+        totalPending >= MAX_QUEUE
       ) {
         return;
       }
 
-      if (
-        preparedImageRef.current
+      /*
+       * How many slots to fill.
+       */
+      const slotsToFill =
+        MAX_QUEUE - totalPending;
+
+      for (
+        let i = 0;
+        i < slotsToFill;
+        i++
       ) {
-        return;
-      }
+        activeDownloadsRef.current += 1;
 
-      preparingRef.current =
-        true;
+        (async () => {
+          try {
+            const data =
+              await fetchRandomImage(
+                selectedCategory
+              );
 
-      try {
-        /*
-         * Get next random image.
-         */
-        const data =
-          await fetchRandomImage(
-            selectedCategory
-          );
+            /*
+             * Category changed while
+             * fetching.
+             */
+            if (
+              categoryRef.current !==
+              selectedCategory
+            ) {
+              return;
+            }
 
-        /*
-         * Category may have changed
-         * while API was responding.
-         */
-        if (
-          categoryRef.current !==
-          selectedCategory
-        ) {
-          return;
-        }
+            const img =
+              new Image();
 
-        /*
-         * Create low-priority browser
-         * download.
-         */
-        const img =
-          new Image();
+            img.decoding = "async";
+            img.fetchPriority =
+              "low";
 
-        img.decoding = "async";
-        img.fetchPriority =
-          "low";
-
-        const prepared: PreparedImage =
-          {
-            data,
-            element: img,
-            loaded: false,
-          };
-
-        preparedImageRef.current =
-          prepared;
-
-        preloadImageRef.current =
-          img;
-
-        /*
-         * ACTUALLY download the image.
-         */
-        await new Promise<void>(
-          (
-            resolve,
-            reject
-          ) => {
-            img.onload =
-              async () => {
-                try {
-                  if (
-                    "decode" in img
-                  ) {
-                    await img.decode();
-                  }
-                } catch {
-                  // Already loaded.
-                }
-
-                prepared.loaded =
-                  true;
-
-                resolve();
+            const prepared: PreparedImage =
+              {
+                data,
+                element: img,
+                loaded: false,
               };
 
-            img.onerror =
-              () => {
-                if (
-                  preparedImageRef
-                    .current ===
-                  prepared
-                ) {
-                  preparedImageRef.current =
-                    null;
-                }
+            await new Promise<void>(
+              (
+                resolve,
+                reject
+              ) => {
+                img.onload =
+                  async () => {
+                    try {
+                      if (
+                        "decode" in img
+                      ) {
+                        await img.decode();
+                      }
+                    } catch {
+                      // Already loaded.
+                    }
 
-                reject(
-                  new Error(
-                    "Preload failed"
-                  )
-                );
-              };
+                    prepared.loaded =
+                      true;
 
-            img.src =
-              data.image;
+                    resolve();
+                  };
+
+                img.onerror =
+                  () => {
+                    reject(
+                      new Error(
+                        "Preload failed"
+                      )
+                    );
+                  };
+
+                img.src =
+                  data.image;
+              }
+            );
+
+            /*
+             * Only add to queue if
+             * category hasn't changed.
+             */
+            if (
+              categoryRef.current ===
+              selectedCategory
+            ) {
+              queueRef.current.push(
+                prepared
+              );
+            }
+          } catch (error) {
+            console.error(
+              "Queue fill error:",
+              error
+            );
+          } finally {
+            activeDownloadsRef.current =
+              Math.max(
+                0,
+                activeDownloadsRef.current - 1
+              );
           }
-        );
-      } catch (error) {
-        console.error(
-          "Preload error:",
-          error
-        );
-
-        preparedImageRef.current =
-          null;
-      } finally {
-        preparingRef.current =
-          false;
-
-        preloadImageRef.current =
-          null;
+        })();
       }
     };
+
+    fill();
+  };
 
   /* ---------------- Initial Image ---------------- */
 
@@ -416,7 +412,7 @@ function App() {
         /*
          * Start preparing image #2.
          */
-        prepareNextImage("all");
+        fillQueue("all");
       } catch (error) {
         console.error(
           "Initial image error:",
@@ -438,20 +434,20 @@ function App() {
       setShowInfo(false);
 
       /*
-       * If next image is already
-       * completely downloaded:
-       *
-       * INSTANT SWAP.
+       * Take first loaded image
+       * from queue.
        */
-      const prepared =
-        preparedImageRef.current;
+      const readyIndex =
+        queueRef.current.findIndex(
+          (item) => item.loaded
+        );
 
-      if (
-        prepared &&
-        prepared.loaded
-      ) {
-        preparedImageRef.current =
-          null;
+      if (readyIndex !== -1) {
+        const prepared =
+          queueRef.current.splice(
+            readyIndex,
+            1
+          )[0];
 
         setImage(
           prepared.data
@@ -462,10 +458,9 @@ function App() {
         );
 
         /*
-         * Immediately begin preparing
-         * the next one.
+         * Refill the queue.
          */
-        prepareNextImage(
+        fillQueue(
           categoryRef.current
         );
 
@@ -481,31 +476,36 @@ function App() {
 
       try {
         /*
-         * If a background image is
-         * currently downloading, abandon
-         * that low-priority request and
-         * download the same image with
-         * high priority.
+         * Check if queue has a
+         * downloading image.
          */
-        if (
-          prepared &&
-          !prepared.loaded
-        ) {
+        const downloading =
+          queueRef.current.find(
+            (item) => !item.loaded
+          );
+
+        if (downloading) {
           /*
-           * Stop current browser download.
+           * Remove from queue.
            */
-          prepared.element.src =
+          queueRef.current =
+            queueRef.current.filter(
+              (item) =>
+                item !== downloading
+            );
+
+          /*
+           * Stop low-priority download.
+           */
+          downloading.element.src =
             "";
 
           const data =
-            prepared.data;
-
-          preparedImageRef.current =
-            null;
+            downloading.data;
 
           /*
-           * User explicitly clicked,
-           * therefore HIGH priority.
+           * Re-download with HIGH
+           * priority.
            */
           await downloadImage(
             data,
@@ -543,7 +543,7 @@ function App() {
         /*
          * Prepare the image after this one.
          */
-        prepareNextImage(
+        fillQueue(
           categoryRef.current
         );
       } catch (error) {
@@ -563,21 +563,18 @@ function App() {
       selectedCategory: string
     ) => {
       /*
-       * Clear prepared image from
-       * previous category.
+       * Clear queue from previous
+       * category.
        */
-      if (
-        preloadImageRef.current
-      ) {
-        preloadImageRef.current.src =
-          "";
-      }
+      queueRef.current.forEach(
+        (item) => {
+          item.element.src = "";
+        }
+      );
 
-      preparedImageRef.current =
-        null;
+      queueRef.current = [];
 
-      preparingRef.current =
-        false;
+      activeDownloadsRef.current = 0;
 
       categoryRef.current =
         selectedCategory;
@@ -617,7 +614,7 @@ function App() {
         /*
          * Start next image preparation.
          */
-        prepareNextImage(
+        fillQueue(
           selectedCategory
         );
       } catch (error) {
